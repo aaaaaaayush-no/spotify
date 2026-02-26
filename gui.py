@@ -5,7 +5,7 @@ gui.py – Tkinter GUI for the Spotify Playlist Downloader.
 import os
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from core import (
     AUDIO_FORMAT,
@@ -14,6 +14,16 @@ from core import (
     DOWNLOAD_PATH,
     get_playlist_info,
     run_download,
+)
+from library import scan_directory, TrackMeta
+from playlists import (
+    load_playlists,
+    create_playlist,
+    delete_playlist,
+    rename_playlist,
+    add_track_to_playlist,
+    remove_track_from_playlist,
+    PlaylistEntry,
 )
 
 AUDIO_FORMATS = ["m4a", "mp3", "opus", "flac", "wav", "aac"]
@@ -37,13 +47,15 @@ class SpotifyDownloaderApp(tk.Tk):
         self.title("Spotify Playlist Downloader")
         self.configure(bg=BG)
         self.resizable(True, True)
-        self.minsize(720, 560)
+        self.minsize(900, 620)
 
         # state
         self._cancel_flag: list[bool] = [False]
         self._worker: threading.Thread | None = None
         self._progress_total: int = 0
         self._progress_done: int = 0
+        self._library_tracks: list[TrackMeta] = []
+        self._playlists_data: list = []
 
         self._build_ui()
         self.update_idletasks()
@@ -53,15 +65,14 @@ class SpotifyDownloaderApp(tk.Tk):
 
     def _build_ui(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(1, weight=1)
 
         self._build_header()
-        self._build_settings()
-        self._build_panes()
+        self._build_notebook()
         self._build_footer()
 
     def _build_header(self) -> None:
-        hdr = tk.Frame(self, bg=BG, pady=14)
+        hdr = tk.Frame(self, bg=BG, pady=10)
         hdr.grid(row=0, column=0, sticky="ew", padx=20)
 
         tk.Label(
@@ -76,13 +87,55 @@ class SpotifyDownloaderApp(tk.Tk):
             font=("Helvetica", 10),
         ).pack(side="left", padx=(10, 0), anchor="s", pady=3)
 
-    def _build_settings(self) -> None:
+    def _build_notebook(self) -> None:
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("TNotebook", background=BG, borderwidth=0)
+        style.configure(
+            "TNotebook.Tab",
+            background=SURFACE2, foreground=TEXT_MUTED,
+            padding=[14, 6],
+            font=("Helvetica", 10, "bold"),
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", ACCENT)],
+            foreground=[("selected", "#000000")],
+        )
+
+        self.notebook = ttk.Notebook(self)
+        self.notebook.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 6))
+
+        # Tab 1 – Download
+        dl_frame = tk.Frame(self.notebook, bg=BG)
+        self.notebook.add(dl_frame, text="  ⬇  Download  ")
+        self._build_download_tab(dl_frame)
+
+        # Tab 2 – Library
+        lib_frame = tk.Frame(self.notebook, bg=BG)
+        self.notebook.add(lib_frame, text="  📁  Library  ")
+        self._build_library_tab(lib_frame)
+
+        # Tab 3 – Playlists
+        pl_frame = tk.Frame(self.notebook, bg=BG)
+        self.notebook.add(pl_frame, text="  🎶  Playlists  ")
+        self._build_playlists_tab(pl_frame)
+
+    # ── Download Tab ──────────────────────────────────────────────────────────
+
+    def _build_download_tab(self, parent: tk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
+        self._build_settings(parent)
+        self._build_panes(parent)
+
+    def _build_settings(self, parent: tk.Frame) -> None:
         frame = tk.LabelFrame(
-            self, text=" Settings ", bg=SURFACE,
+            parent, text=" Settings ", bg=SURFACE,
             fg=TEXT_MUTED, bd=0,
             font=("Helvetica", 9),
         )
-        frame.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 10))
+        frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(6, 6))
         frame.columnconfigure(1, weight=1)
 
         # ── Playlist URL ──────────────────────────────────────────────────────
@@ -159,12 +212,12 @@ class SpotifyDownloaderApp(tk.Tk):
         )
         chk.grid(row=5, column=1, sticky="w", padx=(0, 10), pady=(2, 6))
 
-    def _build_panes(self) -> None:
+    def _build_panes(self, parent: tk.Frame) -> None:
         pane = tk.PanedWindow(
-            self, orient=tk.HORIZONTAL,
+            parent, orient=tk.HORIZONTAL,
             bg=BG, sashwidth=6, sashrelief="flat",
         )
-        pane.grid(row=2, column=0, sticky="nsew", padx=20, pady=(0, 6))
+        pane.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 6))
 
         # left – track list
         left = tk.Frame(pane, bg=SURFACE, bd=0)
@@ -249,9 +302,317 @@ class SpotifyDownloaderApp(tk.Tk):
         self.log_text.tag_configure("error", foreground=ERROR)
         self.log_text.tag_configure("info", foreground=TEXT_MUTED)
 
+    # ── Library Tab ───────────────────────────────────────────────────────────
+
+    def _build_library_tab(self, parent: tk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
+
+        # toolbar
+        toolbar = tk.Frame(parent, bg=SURFACE)
+        toolbar.grid(row=0, column=0, sticky="ew", padx=10, pady=(6, 4))
+
+        tk.Label(
+            toolbar, text="Downloaded Songs", bg=SURFACE, fg=TEXT,
+            font=("Helvetica", 11, "bold"),
+        ).pack(side="left", padx=8)
+
+        self.lib_count_var = tk.StringVar(value="")
+        tk.Label(
+            toolbar, textvariable=self.lib_count_var,
+            bg=SURFACE, fg=TEXT_MUTED, font=("Helvetica", 9),
+        ).pack(side="left", padx=(6, 0))
+
+        self._btn(toolbar, "🔄 Refresh", self._refresh_library,
+                  secondary=True, width=10, pady=2).pack(side="right", padx=6)
+        self._btn(toolbar, "➕ Add to Playlist", self._add_selected_to_playlist,
+                  width=16, pady=2).pack(side="right", padx=(0, 4))
+
+        # treeview
+        tree_frame = tk.Frame(parent, bg=SURFACE)
+        tree_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 6))
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+
+        cols = ("title", "artist", "album", "duration", "format")
+        self.lib_tree = ttk.Treeview(
+            tree_frame, columns=cols, show="headings", selectmode="extended",
+        )
+        for col, heading, width in [
+            ("title", "Title", 220),
+            ("artist", "Artist", 160),
+            ("album", "Album", 160),
+            ("duration", "Duration", 70),
+            ("format", "Format", 60),
+        ]:
+            self.lib_tree.heading(col, text=heading, anchor="w")
+            self.lib_tree.column(col, width=width, anchor="w",
+                                  stretch=(col not in ("duration", "format")))
+
+        sb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.lib_tree.yview)
+        self.lib_tree.configure(yscrollcommand=sb.set)
+        self.lib_tree.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+
+        # right-click context menu
+        self.lib_menu = tk.Menu(self, tearoff=0, bg=SURFACE2, fg=TEXT,
+                                activebackground=ACCENT, activeforeground="#000")
+        self.lib_menu.add_command(label="Add to Playlist…", command=self._add_selected_to_playlist)
+        self.lib_tree.bind("<Button-3>", self._lib_context_menu)
+
+    def _lib_context_menu(self, event: tk.Event) -> None:
+        sel = self.lib_tree.selection()
+        if sel:
+            self.lib_menu.tk_popup(event.x_root, event.y_root)
+
+    def _refresh_library(self) -> None:
+        output_dir = self.dir_var.get().strip()
+        if not output_dir or not os.path.isdir(output_dir):
+            messagebox.showwarning("No directory", "Set a valid output directory first.")
+            return
+
+        self._library_tracks = scan_directory(output_dir)
+        for iid in self.lib_tree.get_children():
+            self.lib_tree.delete(iid)
+
+        for t in self._library_tracks:
+            self.lib_tree.insert(
+                "", "end",
+                values=(t["title"], t["artist"], t["album"],
+                        t["duration"], t["fmt"]),
+            )
+        count = len(self._library_tracks)
+        self.lib_count_var.set(f"{count} song{'s' if count != 1 else ''}")
+        self.status_var.set(f"Library: found {count} downloaded file(s).")
+
+    def _add_selected_to_playlist(self) -> None:
+        sel = self.lib_tree.selection()
+        if not sel:
+            messagebox.showinfo("No selection", "Select one or more songs first.")
+            return
+
+        output_dir = self.dir_var.get().strip()
+        pls = load_playlists(output_dir)
+        if not pls:
+            messagebox.showinfo(
+                "No playlists",
+                "Create a playlist in the Playlists tab first.",
+            )
+            return
+
+        names = [p["name"] for p in pls]
+        win = tk.Toplevel(self)
+        win.title("Add to Playlist")
+        win.configure(bg=SURFACE)
+        win.resizable(False, False)
+        win.transient(self)
+        win.grab_set()
+
+        tk.Label(win, text="Select playlist:", bg=SURFACE, fg=TEXT,
+                 font=("Helvetica", 10)).pack(padx=16, pady=(12, 4))
+        listbox = tk.Listbox(win, bg=SURFACE2, fg=TEXT, selectbackground=ACCENT,
+                             selectforeground="#000", font=("Helvetica", 10),
+                             relief="flat", bd=2, height=min(len(names), 8))
+        for n in names:
+            listbox.insert("end", n)
+        listbox.pack(padx=16, pady=4, fill="x")
+        if names:
+            listbox.selection_set(0)
+
+        def confirm() -> None:
+            idx = listbox.curselection()
+            if not idx:
+                return
+            pi = idx[0]
+            for iid in sel:
+                vals = self.lib_tree.item(iid, "values")
+                lib_idx = self.lib_tree.index(iid)
+                track_path = self._library_tracks[lib_idx]["path"] if lib_idx < len(self._library_tracks) else ""
+                add_track_to_playlist(
+                    output_dir, pi,
+                    PlaylistEntry(path=track_path, title=vals[0], artist=vals[1]),
+                )
+            win.destroy()
+            self._refresh_playlists()
+            self.status_var.set(f"Added {len(sel)} song(s) to \"{names[pi]}\".")
+
+        self._btn(win, "Add", confirm, width=10, pady=4).pack(pady=(4, 12))
+
+    # ── Playlists Tab ─────────────────────────────────────────────────────────
+
+    def _build_playlists_tab(self, parent: tk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.columnconfigure(1, weight=2)
+        parent.rowconfigure(1, weight=1)
+
+        # toolbar
+        toolbar = tk.Frame(parent, bg=SURFACE)
+        toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(6, 4))
+
+        tk.Label(
+            toolbar, text="Your Playlists", bg=SURFACE, fg=TEXT,
+            font=("Helvetica", 11, "bold"),
+        ).pack(side="left", padx=8)
+
+        self._btn(toolbar, "🔄 Refresh", self._refresh_playlists,
+                  secondary=True, width=10, pady=2).pack(side="right", padx=6)
+        self._btn(toolbar, "🗑 Delete", self._delete_selected_playlist,
+                  secondary=True, width=10, pady=2).pack(side="right", padx=(0, 4))
+        self._btn(toolbar, "✏ Rename", self._rename_selected_playlist,
+                  secondary=True, width=10, pady=2).pack(side="right", padx=(0, 4))
+        self._btn(toolbar, "➕ New Playlist", self._create_new_playlist,
+                  width=14, pady=2).pack(side="right", padx=(0, 4))
+
+        # left: playlist list
+        pl_frame = tk.Frame(parent, bg=SURFACE)
+        pl_frame.grid(row=1, column=0, sticky="nsew", padx=(10, 4), pady=(0, 6))
+        pl_frame.rowconfigure(0, weight=1)
+        pl_frame.columnconfigure(0, weight=1)
+
+        self.pl_listbox = tk.Listbox(
+            pl_frame, bg=SURFACE2, fg=TEXT,
+            selectbackground=ACCENT, selectforeground="#000",
+            font=("Helvetica", 10), relief="flat", bd=2,
+        )
+        self.pl_listbox.grid(row=0, column=0, sticky="nsew")
+        sb_pl = ttk.Scrollbar(pl_frame, orient="vertical", command=self.pl_listbox.yview)
+        self.pl_listbox.configure(yscrollcommand=sb_pl.set)
+        sb_pl.grid(row=0, column=1, sticky="ns")
+        self.pl_listbox.bind("<<ListboxSelect>>", self._on_playlist_select)
+
+        # right: playlist tracks
+        track_frame = tk.Frame(parent, bg=SURFACE)
+        track_frame.grid(row=1, column=1, sticky="nsew", padx=(4, 10), pady=(0, 6))
+        track_frame.rowconfigure(1, weight=1)
+        track_frame.columnconfigure(0, weight=1)
+
+        trk_hdr = tk.Frame(track_frame, bg=SURFACE)
+        trk_hdr.grid(row=0, column=0, columnspan=2, sticky="ew")
+        self.pl_track_label = tk.StringVar(value="Select a playlist")
+        tk.Label(
+            trk_hdr, textvariable=self.pl_track_label,
+            bg=SURFACE, fg=TEXT_MUTED,
+            font=("Helvetica", 9, "bold"),
+        ).pack(side="left", padx=8, pady=4)
+        self._btn(trk_hdr, "Remove Track", self._remove_track_from_current_playlist,
+                  secondary=True, width=14, pady=0).pack(side="right", padx=6)
+
+        cols = ("title", "artist")
+        self.pl_track_tree = ttk.Treeview(
+            track_frame, columns=cols, show="headings", selectmode="browse",
+        )
+        self.pl_track_tree.heading("title", text="Title", anchor="w")
+        self.pl_track_tree.heading("artist", text="Artist", anchor="w")
+        self.pl_track_tree.column("title", width=240, anchor="w")
+        self.pl_track_tree.column("artist", width=160, anchor="w")
+
+        sb_trk = ttk.Scrollbar(track_frame, orient="vertical",
+                                command=self.pl_track_tree.yview)
+        self.pl_track_tree.configure(yscrollcommand=sb_trk.set)
+        self.pl_track_tree.grid(row=1, column=0, sticky="nsew")
+        sb_trk.grid(row=1, column=1, sticky="ns")
+
+        # right-click on playlist tracks
+        self.pl_trk_menu = tk.Menu(self, tearoff=0, bg=SURFACE2, fg=TEXT,
+                                   activebackground=ACCENT, activeforeground="#000")
+        self.pl_trk_menu.add_command(label="Remove from Playlist",
+                                     command=self._remove_track_from_current_playlist)
+        self.pl_track_tree.bind("<Button-3>", self._pl_trk_context_menu)
+
+    def _pl_trk_context_menu(self, event: tk.Event) -> None:
+        sel = self.pl_track_tree.selection()
+        if sel:
+            self.pl_trk_menu.tk_popup(event.x_root, event.y_root)
+
+    def _refresh_playlists(self) -> None:
+        output_dir = self.dir_var.get().strip()
+        self._playlists_data = load_playlists(output_dir) if output_dir else []
+        self.pl_listbox.delete(0, "end")
+        for p in self._playlists_data:
+            self.pl_listbox.insert("end", f"  {p['name']}  ({len(p['tracks'])} tracks)")
+        # clear track view
+        for iid in self.pl_track_tree.get_children():
+            self.pl_track_tree.delete(iid)
+        self.pl_track_label.set("Select a playlist")
+
+    def _on_playlist_select(self, event: tk.Event | None = None) -> None:
+        sel = self.pl_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        if idx >= len(self._playlists_data):
+            return
+        pl = self._playlists_data[idx]
+        self.pl_track_label.set(f"{pl['name']}  –  {len(pl['tracks'])} track(s)")
+        for iid in self.pl_track_tree.get_children():
+            self.pl_track_tree.delete(iid)
+        for t in pl["tracks"]:
+            self.pl_track_tree.insert("", "end", values=(t["title"], t["artist"]))
+
+    def _create_new_playlist(self) -> None:
+        name = simpledialog.askstring(
+            "New Playlist", "Enter playlist name:",
+            parent=self,
+        )
+        if not name or not name.strip():
+            return
+        output_dir = self.dir_var.get().strip()
+        if not output_dir:
+            messagebox.showwarning("No directory", "Set an output directory first.")
+            return
+        create_playlist(output_dir, name.strip())
+        self._refresh_playlists()
+        self.status_var.set(f"Created playlist \"{name.strip()}\".")
+
+    def _delete_selected_playlist(self) -> None:
+        sel = self.pl_listbox.curselection()
+        if not sel:
+            messagebox.showinfo("No selection", "Select a playlist to delete.")
+            return
+        idx = sel[0]
+        name = self._playlists_data[idx]["name"]
+        if not messagebox.askyesno("Delete Playlist", f"Delete \"{name}\"?"):
+            return
+        output_dir = self.dir_var.get().strip()
+        delete_playlist(output_dir, idx)
+        self._refresh_playlists()
+        self.status_var.set(f"Deleted playlist \"{name}\".")
+
+    def _rename_selected_playlist(self) -> None:
+        sel = self.pl_listbox.curselection()
+        if not sel:
+            messagebox.showinfo("No selection", "Select a playlist to rename.")
+            return
+        idx = sel[0]
+        old = self._playlists_data[idx]["name"]
+        new_name = simpledialog.askstring(
+            "Rename Playlist", "New name:", initialvalue=old, parent=self,
+        )
+        if not new_name or not new_name.strip():
+            return
+        output_dir = self.dir_var.get().strip()
+        rename_playlist(output_dir, idx, new_name.strip())
+        self._refresh_playlists()
+        self.status_var.set(f"Renamed to \"{new_name.strip()}\".")
+
+    def _remove_track_from_current_playlist(self) -> None:
+        pl_sel = self.pl_listbox.curselection()
+        trk_sel = self.pl_track_tree.selection()
+        if not pl_sel or not trk_sel:
+            return
+        pi = pl_sel[0]
+        ti = self.pl_track_tree.index(trk_sel[0])
+        output_dir = self.dir_var.get().strip()
+        remove_track_from_playlist(output_dir, pi, ti)
+        self._refresh_playlists()
+        # re-select the same playlist
+        if pi < self.pl_listbox.size():
+            self.pl_listbox.selection_set(pi)
+            self._on_playlist_select(None)
+
     def _build_footer(self) -> None:
         footer = tk.Frame(self, bg=BG)
-        footer.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 14))
+        footer.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 14))
         footer.columnconfigure(0, weight=1)
 
         self.status_var = tk.StringVar(value="Ready.")
@@ -381,7 +742,7 @@ class SpotifyDownloaderApp(tk.Tk):
     # ── actions ───────────────────────────────────────────────────────────────
 
     def _center(self) -> None:
-        w, h = 860, 620
+        w, h = 960, 660
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
         self.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
