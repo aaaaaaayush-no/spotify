@@ -9,6 +9,7 @@ __author__ = "Cha @github.com/invzfnc"
 
 import concurrent.futures
 import os
+import threading
 
 from typing import TypedDict, Callable
 from time import sleep
@@ -24,7 +25,7 @@ AUDIO_FORMAT = "m4a"
 CONCURRENT_LIMIT = 5
 CONCURRENT_FRAGMENT_DOWNLOADS = 8
 
-_ytmusic_client = None
+_thread_local = threading.local()
 
 
 class PlaylistInfo(TypedDict):
@@ -69,11 +70,10 @@ def get_playlist_info(playlist_id: str) -> list[PlaylistInfo]:
 def get_song_url(song_info: PlaylistInfo) -> tuple[str, str]:
     """Searches YouTube Music for the best match and returns its URL."""
 
-    global _ytmusic_client
-    if _ytmusic_client is None:
-        _ytmusic_client = YTMusic()
+    if not hasattr(_thread_local, "ytmusic_client"):
+        _thread_local.ytmusic_client = YTMusic()
 
-    data = _ytmusic_client.search(f"{song_info['title']} {song_info['artist']}")
+    data = _thread_local.ytmusic_client.search(f"{song_info['title']} {song_info['artist']}")
 
     url_part = "https://music.youtube.com/watch?v="
 
@@ -115,7 +115,10 @@ def get_song_urls(
         if progress_cb:
             progress_cb("matching", f"Matching: {song_info['title']}")
 
-        url, title = get_song_url(song_info)
+        try:
+            url, title = get_song_url(song_info)
+        except Exception:
+            url, title = "", ""
 
         if url and progress_cb:
             progress_cb("found", f"Found: {title}")
