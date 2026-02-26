@@ -117,7 +117,9 @@ def get_song_urls(
 
         try:
             url, title = get_song_url(song_info)
-        except Exception:
+        except Exception as exc:
+            if progress_cb:
+                progress_cb("error", f"Search error for {song_info['title']}: {exc}")
             url, title = "", ""
 
         if url and progress_cb:
