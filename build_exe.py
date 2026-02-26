@@ -16,4 +16,6 @@ PyInstaller.__main__.run([
     "--windowed",
     "--name=SpotifyDownloader",
     "--clean",
+    "--collect-data=tls_client",
+    "--hidden-import=tls_client",
 ])
