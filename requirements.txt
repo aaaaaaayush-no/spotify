@@ -1,0 +1,13 @@
+beautifulsoup4==4.14.3
+mutagen==1.47.0
+pillow==12.1.0
+pymongo==4.16.0
+pyotp==2.9.0
+redis==7.1.0
+requests==2.32.5
+spotapi==1.2.7
+tls-client==1.0.1
+validators==0.35.0
+websockets==16.0
+yt-dlp==2026.2.21
+ytmusicapi==1.11.5
