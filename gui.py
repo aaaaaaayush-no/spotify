@@ -838,19 +838,24 @@ class SpotifyDownloaderApp(tk.Tk):
             self._log("status", "No tracks pre-fetched; fetching now…")
 
         def worker() -> None:
-            run_download(
-                playlist_url=url,
-                output_dir=output_dir,
-                audio_format=audio_fmt,
-                title_first=title_first,
-                concurrent_limit=concurrent,
-                download_archive=None,
-                concurrent_fragment_downloads=frag_dl,
-                progress_cb=self._on_progress,
-                cancel_flag=self._cancel_flag,
-                selected_tracks=selected_tracks,
-            )
-            self.after(0, self._on_download_done)
+            try:
+                run_download(
+                    playlist_url=url,
+                    output_dir=output_dir,
+                    audio_format=audio_fmt,
+                    title_first=title_first,
+                    concurrent_limit=concurrent,
+                    download_archive=None,
+                    concurrent_fragment_downloads=frag_dl,
+                    progress_cb=self._on_progress,
+                    cancel_flag=self._cancel_flag,
+                    selected_tracks=selected_tracks,
+                )
+            except Exception as exc:
+                self.after(0, lambda: self._on_progress(
+                    "error", f"Download failed: {exc}"))
+            finally:
+                self.after(0, self._on_download_done)
 
         self._worker = threading.Thread(target=worker, daemon=True)
         self._worker.start()
