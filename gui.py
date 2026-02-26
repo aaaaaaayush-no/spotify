@@ -9,6 +9,7 @@ from tkinter import ttk, filedialog, messagebox
 
 from core import (
     AUDIO_FORMAT,
+    CONCURRENT_FRAGMENT_DOWNLOADS,
     CONCURRENT_LIMIT,
     DOWNLOAD_PATH,
     get_playlist_info,
@@ -126,10 +127,23 @@ class SpotifyDownloaderApp(tk.Tk):
         conc_row.grid(row=3, column=1, sticky="w", padx=(0, 10), pady=5)
 
         self.conc_var = tk.IntVar(value=CONCURRENT_LIMIT)
-        self._spinbox(conc_row, self.conc_var, 1, 10).pack(side="left")
+        self._spinbox(conc_row, self.conc_var, 1, 20).pack(side="left")
 
         tk.Label(
             conc_row, text="simultaneous searches",
+            bg=SURFACE, fg=TEXT_MUTED, font=("Helvetica", 9),
+        ).pack(side="left", padx=(6, 0))
+
+        # ── Concurrent fragment downloads ────────────────────────────────────
+        self._add_label(frame, "Fragments:", 4)
+        frag_row = tk.Frame(frame, bg=SURFACE)
+        frag_row.grid(row=4, column=1, sticky="w", padx=(0, 10), pady=5)
+
+        self.frag_var = tk.IntVar(value=CONCURRENT_FRAGMENT_DOWNLOADS)
+        self._spinbox(frag_row, self.frag_var, 1, 32).pack(side="left")
+
+        tk.Label(
+            frag_row, text="concurrent fragment downloads",
             bg=SURFACE, fg=TEXT_MUTED, font=("Helvetica", 9),
         ).pack(side="left", padx=(6, 0))
 
@@ -143,7 +157,7 @@ class SpotifyDownloaderApp(tk.Tk):
             activebackground=SURFACE, activeforeground=TEXT,
             font=("Helvetica", 9),
         )
-        chk.grid(row=4, column=1, sticky="w", padx=(0, 10), pady=(2, 6))
+        chk.grid(row=5, column=1, sticky="w", padx=(0, 10), pady=(2, 6))
 
     def _build_panes(self) -> None:
         pane = tk.PanedWindow(
@@ -456,6 +470,7 @@ class SpotifyDownloaderApp(tk.Tk):
         audio_fmt = self.fmt_var.get()
         concurrent = self.conc_var.get()
         title_first = self.title_first_var.get()
+        frag_dl = self.frag_var.get()
 
         # pre-populate track list if empty
         if not children:
@@ -469,6 +484,7 @@ class SpotifyDownloaderApp(tk.Tk):
                 title_first=title_first,
                 concurrent_limit=concurrent,
                 download_archive=None,
+                concurrent_fragment_downloads=frag_dl,
                 progress_cb=self._on_progress,
                 cancel_flag=self._cancel_flag,
                 selected_tracks=selected_tracks,

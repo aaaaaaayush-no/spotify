@@ -21,7 +21,8 @@ from ytmusicapi import YTMusic
 
 DOWNLOAD_PATH = "./downloads/"
 AUDIO_FORMAT = "m4a"
-CONCURRENT_LIMIT = 3
+CONCURRENT_LIMIT = 5
+CONCURRENT_FRAGMENT_DOWNLOADS = 8
 
 _ytmusic_client = None
 
@@ -121,20 +122,18 @@ def get_song_urls(
         elif progress_cb:
             progress_cb("not_found", f"No match for: {song_info['title']}")
 
-        sleep(uniform(0.5, 1.5))
+        sleep(uniform(0.1, 0.5))
         return url
 
     urls: list[str] = []
-    batches = [
-        playlist_info[i: i + concurrent_limit]
-        for i in range(0, len(playlist_info), concurrent_limit)
-    ]
-
-    for batch in batches:
-        if cancel_flag and cancel_flag[0]:
-            break
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            urls.extend(executor.map(process_song, batch))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_limit) as executor:
+        futures = []
+        for song in playlist_info:
+            if cancel_flag and cancel_flag[0]:
+                break
+            futures.append(executor.submit(process_song, song))
+        for future in concurrent.futures.as_completed(futures):
+            urls.append(future.result())
 
     return urls
 
@@ -145,6 +144,7 @@ def download_from_urls(
     audio_format: str,
     title_first: bool,
     download_archive: str | None,
+    concurrent_fragment_downloads: int = CONCURRENT_FRAGMENT_DOWNLOADS,
     progress_cb: Callable[[str, str], None] | None = None,
 ) -> None:
     """Downloads audio for each URL via yt-dlp."""
@@ -176,7 +176,7 @@ def download_from_urls(
                 progress_cb("error", msg.strip())
 
     options = {
-        "concurrent_fragment_downloads": 3,
+        "concurrent_fragment_downloads": concurrent_fragment_downloads,
         "extract_flat": "discard_in_playlist",
         "final_ext": "m4a",
         "format": "bestaudio/best",
@@ -221,6 +221,7 @@ def run_download(
     title_first: bool,
     concurrent_limit: int,
     download_archive: str | None,
+    concurrent_fragment_downloads: int = CONCURRENT_FRAGMENT_DOWNLOADS,
     progress_cb: Callable[[str, str], None] | None = None,
     cancel_flag: list[bool] | None = None,
     selected_tracks: list[PlaylistInfo] | None = None,
@@ -259,7 +260,8 @@ def run_download(
         progress_cb("status", "Downloading audio files…")
 
     download_from_urls(urls, output_dir, audio_format, title_first,
-                       download_archive, progress_cb)
+                       download_archive, concurrent_fragment_downloads,
+                       progress_cb)
 
     if progress_cb:
         progress_cb("done", "All downloads complete!")
