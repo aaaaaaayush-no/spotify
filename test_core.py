@@ -5,7 +5,92 @@ import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
-from core import get_song_url, get_song_urls, download_from_urls, run_download, _thread_local
+from core import (
+    get_song_url, get_song_urls, download_from_urls, run_download,
+    get_album_info, get_playlist_info, _is_album_url, _thread_local,
+)
+
+
+class TestIsAlbumUrl(unittest.TestCase):
+    """Test _is_album_url URL detection."""
+
+    def test_album_url(self):
+        self.assertTrue(_is_album_url("https://open.spotify.com/album/2CUXo26JAWIbQx0EVMnjpA"))
+
+    def test_album_url_with_query(self):
+        self.assertTrue(_is_album_url(
+            "https://open.spotify.com/album/2CUXo26JAWIbQx0EVMnjpA?si=qEvS5pSGSqKci_acBtzsiQ"
+        ))
+
+    def test_playlist_url(self):
+        self.assertFalse(_is_album_url("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"))
+
+    def test_plain_id(self):
+        self.assertFalse(_is_album_url("2CUXo26JAWIbQx0EVMnjpA"))
+
+
+class TestGetAlbumInfo(unittest.TestCase):
+    """Test get_album_info with mocked spotapi."""
+
+    @patch("core.Public")
+    def test_returns_tracks_from_album(self, mock_public):
+        mock_public.album_info.return_value = iter([
+            [
+                {"track": {"name": "Song A", "artists": {"items": [{"profile": {"name": "Artist A"}}]}}},
+                {"track": {"name": "Song B", "artists": {"items": [{"profile": {"name": "Artist B"}}]}}},
+            ]
+        ])
+        result = get_album_info("https://open.spotify.com/album/abc123")
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], {"title": "Song A", "artist": "Artist A"})
+        self.assertEqual(result[1], {"title": "Song B", "artist": "Artist B"})
+
+    @patch("core.Public")
+    def test_returns_empty_on_api_error(self, mock_public):
+        mock_public.album_info.side_effect = Exception("API error")
+        result = get_album_info("https://open.spotify.com/album/abc123")
+        self.assertEqual(result, [])
+
+    @patch("core.Public")
+    def test_skips_malformed_items(self, mock_public):
+        mock_public.album_info.return_value = iter([
+            [
+                {"track": {"name": "Good", "artists": {"items": [{"profile": {"name": "Artist"}}]}}},
+                {"bad_key": "no track data"},
+            ]
+        ])
+        result = get_album_info("https://open.spotify.com/album/abc123")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["title"], "Good")
+
+    @patch("core.Public")
+    def test_deduplicates_tracks(self, mock_public):
+        track = {"track": {"name": "Same", "artists": {"items": [{"profile": {"name": "Artist"}}]}}}
+        mock_public.album_info.return_value = iter([[track, track]])
+        result = get_album_info("https://open.spotify.com/album/abc123")
+        self.assertEqual(len(result), 1)
+
+
+class TestGetPlaylistInfoAlbumDispatch(unittest.TestCase):
+    """Test that get_playlist_info dispatches to get_album_info for album URLs."""
+
+    @patch("core.get_album_info")
+    def test_album_url_dispatches_to_album_handler(self, mock_album):
+        mock_album.return_value = [{"title": "T", "artist": "A"}]
+        url = "https://open.spotify.com/album/2CUXo26JAWIbQx0EVMnjpA?si=abc"
+        result = get_playlist_info(url)
+        mock_album.assert_called_once_with(url)
+        self.assertEqual(result, [{"title": "T", "artist": "A"}])
+
+    @patch("core.Public")
+    def test_playlist_url_uses_playlist_api(self, mock_public):
+        mock_public.playlist_info.return_value = iter([
+            {"items": [{"itemV2": {"data": {"__typename": "Track", "name": "S",
+             "artists": {"items": [{"profile": {"name": "A"}}]}}}}]}
+        ])
+        result = get_playlist_info("https://open.spotify.com/playlist/abc")
+        mock_public.playlist_info.assert_called_once()
+        self.assertEqual(len(result), 1)
 
 
 class TestGetSongUrl(unittest.TestCase):

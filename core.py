@@ -9,6 +9,7 @@ __author__ = "Cha @github.com/invzfnc"
 
 import concurrent.futures
 import os
+import re
 import threading
 
 from typing import TypedDict, Callable
@@ -33,9 +34,48 @@ class PlaylistInfo(TypedDict):
     artist: str
 
 
+def _is_album_url(url: str) -> bool:
+    """Return *True* if *url* points to a Spotify album."""
+    return bool(re.search(r"open\.spotify\.com/album/", url))
+
+
+def get_album_info(album_id: str) -> list[PlaylistInfo]:
+    """Extracts track data from a Spotify album and returns a list of
+    ``{"title": ..., "artist": ...}`` dicts."""
+
+    result: list[PlaylistInfo] = []
+
+    try:
+        chunks = list(Public.album_info(album_id))
+        items = list(chain.from_iterable(chunks))
+    except (KeyError, Exception):
+        return result
+
+    for item in items:
+        try:
+            track = item["track"]
+            song: PlaylistInfo = {
+                "title": track["name"],
+                "artist": track["artists"]["items"][0]["profile"]["name"],
+            }
+        except (KeyError, IndexError, TypeError):
+            continue
+
+        if song not in result:
+            result.append(song)
+
+    return result
+
+
 def get_playlist_info(playlist_id: str) -> list[PlaylistInfo]:
     """Extracts track data from Spotify and returns a list of
-    ``{"title": ..., "artist": ...}`` dicts."""
+    ``{"title": ..., "artist": ...}`` dicts.
+
+    Accepts playlist **or** album URLs/IDs.  Album URLs are detected
+    automatically and routed to :func:`get_album_info`."""
+
+    if _is_album_url(playlist_id):
+        return get_album_info(playlist_id)
 
     result: list[PlaylistInfo] = []
 
@@ -242,13 +282,13 @@ def run_download(
         playlist_info = selected_tracks
     else:
         if progress_cb:
-            progress_cb("status", "Fetching playlist info from Spotify…")
+            progress_cb("status", "Fetching track info from Spotify…")
 
         playlist_info = get_playlist_info(playlist_url)
 
         if not playlist_info:
             if progress_cb:
-                progress_cb("error", "Could not fetch playlist. Check the URL and try again.")
+                progress_cb("error", "Could not fetch tracks. Check the URL and try again.")
             return []
 
     if progress_cb:
