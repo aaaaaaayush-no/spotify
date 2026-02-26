@@ -503,21 +503,23 @@ class SpotifyDownloaderApp(tk.Tk):
         elif kind == "found":
             name = message.replace("Found: ", "").split(" (")[0]
             for iid in self.track_tree.get_children():
-                if self.track_tree.item(iid, "values")[1] in name or \
-                        name in self.track_tree.item(iid, "values")[1]:
+                title = self.track_tree.item(iid, "values")[1]
+                if title in name or name in title:
                     self.track_tree.set(iid, "status", "matched")
                     break
-            self._progress_done += 1
-            if self._progress_total > 0:
-                pct = int(self._progress_done / self._progress_total * 100)
-                self.progress.stop()
-                self.progress["value"] = pct
+            self._advance_progress()
         elif kind == "not_found":
-            self._progress_done += 1
-            if self._progress_total > 0:
-                pct = int(self._progress_done / self._progress_total * 100)
-                self.progress.stop()
-                self.progress["value"] = pct
+            self._advance_progress()
+
+    def _advance_progress(self) -> None:
+        """Increment the determinate progress bar by one track."""
+        self._progress_done += 1
+        if self._progress_total > 0:
+            if self._progress_done == 1:
+                self.progress.stop()          # stop indeterminate animation once
+            self.progress["value"] = int(
+                self._progress_done / self._progress_total * 100
+            )
 
     def _on_download_done(self) -> None:
         self.progress.stop()
