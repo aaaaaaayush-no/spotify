@@ -127,12 +127,12 @@ def get_song_urls(
 
     urls: list[str] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_limit) as executor:
-        futures = []
-        for song in playlist_info:
+        futures = [executor.submit(process_song, song) for song in playlist_info]
+        for future in futures:
             if cancel_flag and cancel_flag[0]:
+                for f in futures:
+                    f.cancel()
                 break
-            futures.append(executor.submit(process_song, song))
-        for future in concurrent.futures.as_completed(futures):
             urls.append(future.result())
 
     return urls
