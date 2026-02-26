@@ -138,14 +138,14 @@ class SpotifyDownloaderApp(tk.Tk):
         frame.grid(row=0, column=0, sticky="ew", padx=10, pady=(6, 6))
         frame.columnconfigure(1, weight=1)
 
-        # ── Playlist URL ──────────────────────────────────────────────────────
-        self._add_label(frame, "Playlist URL:", 0)
+        # ── Spotify URL ───────────────────────────────────────────────────────
+        self._add_label(frame, "Spotify URL:", 0)
         url_row = tk.Frame(frame, bg=SURFACE)
         url_row.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=5)
         url_row.columnconfigure(0, weight=1)
 
         self.url_var = tk.StringVar()
-        url_entry = self._entry(url_row, self.url_var, placeholder="https://open.spotify.com/playlist/…")
+        url_entry = self._entry(url_row, self.url_var, placeholder="https://open.spotify.com/playlist/… or …/album/…")
         url_entry.grid(row=0, column=0, sticky="ew")
 
         self._btn(url_row, "Fetch Tracks", self._fetch_tracks, width=12).grid(
@@ -761,8 +761,8 @@ class SpotifyDownloaderApp(tk.Tk):
             return
 
         self._clear_tracks()
-        self._log("status", f"Fetching playlist: {url}")
-        self.status_var.set("Fetching playlist…")
+        self._log("status", f"Fetching tracks: {url}")
+        self.status_var.set("Fetching tracks…")
         self.progress.start(12)
 
         def worker() -> None:
@@ -776,7 +776,7 @@ class SpotifyDownloaderApp(tk.Tk):
         self.progress["value"] = 0
         if not tracks:
             self.status_var.set("No tracks found – check the URL.")
-            self._log("error", "No tracks found. Make sure the playlist is public.")
+            self._log("error", "No tracks found. Make sure the playlist or album is public.")
             return
 
         for t in tracks:
@@ -914,9 +914,9 @@ class SpotifyDownloaderApp(tk.Tk):
 
     def _get_url(self) -> str:
         raw = self.url_var.get().strip()
-        placeholder = "https://open.spotify.com/playlist/…"
+        placeholder = "https://open.spotify.com/playlist/… or …/album/…"
         if not raw or raw == placeholder:
-            messagebox.showwarning("Missing URL", "Please enter a Spotify playlist URL.")
+            messagebox.showwarning("Missing URL", "Please enter a Spotify playlist or album URL.")
             return ""
         return raw
 
