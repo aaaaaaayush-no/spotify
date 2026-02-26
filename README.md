@@ -11,10 +11,13 @@ A GUI application to browse and download Spotify playlists. It fetches track met
 - 🎵 **No Spotify account required** – playlist metadata is fetched publicly
 - 🖥 **GUI interface** – manage and monitor all downloads in one window
 - 📋 **Track list** – see every song in the playlist before downloading
+- ☑ **Selective downloads** – check/uncheck individual tracks to download only what you want
 - ⬇ **One-click download** – match and download with a single button
 - 🎚 **Configurable** – choose output folder, audio format, and concurrency
 - 🔍 **Real-time log** – watch matching and download progress live
+- 📊 **Progress tracking** – determinate progress bar and per-track status
 - ❌ **Cancel at any time** – stop an in-progress download gracefully
+- 📦 **Build as .exe** – package into a standalone Windows executable
 
 ## Screenshot
 
@@ -48,9 +51,24 @@ python main.py
 
 1. Paste a **public Spotify playlist URL** into the *Playlist URL* field.
 2. *(Optional)* Click **Fetch Tracks** to preview the track list before downloading.
-3. Choose an **Output Directory**, **Audio Format** (`m4a`, `mp3`, `opus`, …), and **Concurrent** search limit.
-4. Click **⬇ Download** – the app will match each track on YouTube Music, then download and embed metadata automatically.
-5. Monitor progress in the **Log** pane; click **✕ Cancel** to abort.
+3. **Select tracks** – use the checkboxes (☑/☐) in the track list to choose which songs to download. Use **All** / **None** buttons to quickly select or deselect all.
+4. Choose an **Output Directory**, **Audio Format** (`m4a`, `mp3`, `opus`, …), and **Concurrent** search limit.
+5. Click **⬇ Download** – the app will match each selected track on YouTube Music, then download and embed metadata automatically.
+6. Monitor progress in the **Log** pane and the progress bar; click **✕ Cancel** to abort.
+
+## Building a Standalone Executable
+
+You can package the application into a single `.exe` (Windows) or binary (macOS/Linux) using [PyInstaller](https://pyinstaller.org):
+
+```bash
+# Install PyInstaller
+pip install pyinstaller
+
+# Build the executable
+python build_exe.py
+```
+
+The output will be in the `dist/` directory as `SpotifyDownloader` (or `SpotifyDownloader.exe` on Windows).
 
 ## Project Structure
 
@@ -59,6 +77,7 @@ python main.py
 | `main.py` | Application entry point |
 | `gui.py` | Tkinter GUI (dark-themed, responsive) |
 | `core.py` | Spotify playlist fetching + yt-dlp download logic |
+| `build_exe.py` | PyInstaller build script for standalone executable |
 | `requirements.txt` | Python dependencies |
 
 ## Credits

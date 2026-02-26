@@ -223,20 +223,27 @@ def run_download(
     download_archive: str | None,
     progress_cb: Callable[[str, str], None] | None = None,
     cancel_flag: list[bool] | None = None,
+    selected_tracks: list[PlaylistInfo] | None = None,
 ) -> list[PlaylistInfo]:
     """High-level entry point used by the GUI.
 
     Returns the list of tracks found in the playlist (may be empty on error).
+
+    If *selected_tracks* is provided the playlist fetch is skipped and only the
+    given tracks are downloaded.
     """
-    if progress_cb:
-        progress_cb("status", "Fetching playlist info from Spotify…")
-
-    playlist_info = get_playlist_info(playlist_url)
-
-    if not playlist_info:
+    if selected_tracks:
+        playlist_info = selected_tracks
+    else:
         if progress_cb:
-            progress_cb("error", "Could not fetch playlist. Check the URL and try again.")
-        return []
+            progress_cb("status", "Fetching playlist info from Spotify…")
+
+        playlist_info = get_playlist_info(playlist_url)
+
+        if not playlist_info:
+            if progress_cb:
+                progress_cb("error", "Could not fetch playlist. Check the URL and try again.")
+            return []
 
     if progress_cb:
         progress_cb("status", f"Found {len(playlist_info)} tracks. Matching to YouTube Music…")

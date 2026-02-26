@@ -41,6 +41,8 @@ class SpotifyDownloaderApp(tk.Tk):
         # state
         self._cancel_flag: list[bool] = [False]
         self._worker: threading.Thread | None = None
+        self._progress_total: int = 0
+        self._progress_done: int = 0
 
         self._build_ui()
         self.update_idletasks()
@@ -156,24 +158,41 @@ class SpotifyDownloaderApp(tk.Tk):
         left.rowconfigure(1, weight=1)
         left.columnconfigure(0, weight=1)
 
+        track_hdr = tk.Frame(left, bg=SURFACE)
+        track_hdr.grid(row=0, column=0, columnspan=2, sticky="ew")
         tk.Label(
-            left, text="Track List", bg=SURFACE, fg=TEXT_MUTED,
+            track_hdr, text="Track List", bg=SURFACE, fg=TEXT_MUTED,
             font=("Helvetica", 9, "bold"), anchor="w", pady=4,
-        ).grid(row=0, column=0, sticky="ew", padx=8)
+        ).pack(side="left", padx=8)
 
-        cols = ("title", "artist", "status")
+        self.track_count_var = tk.StringVar(value="")
+        tk.Label(
+            track_hdr, textvariable=self.track_count_var,
+            bg=SURFACE, fg=TEXT_MUTED, font=("Helvetica", 8),
+        ).pack(side="left", padx=(4, 0))
+
+        self._btn(track_hdr, "All", self._select_all,
+                  secondary=True, width=4, pady=0).pack(side="right", padx=(0, 6))
+        self._btn(track_hdr, "None", self._deselect_all,
+                  secondary=True, width=4, pady=0).pack(side="right", padx=(0, 4))
+
+        cols = ("sel", "title", "artist", "status")
         self.track_tree = ttk.Treeview(
             left, columns=cols, show="headings",
             selectmode="browse",
         )
         self._style_tree()
         for col, heading, width in [
-            ("title", "Title", 220),
-            ("artist", "Artist", 140),
-            ("status", "Status", 90),
+            ("sel", "✓", 30),
+            ("title", "Title", 210),
+            ("artist", "Artist", 130),
+            ("status", "Status", 80),
         ]:
             self.track_tree.heading(col, text=heading, anchor="w")
-            self.track_tree.column(col, width=width, anchor="w", stretch=True)
+            self.track_tree.column(col, width=width, anchor="w",
+                                   stretch=(col != "sel"))
+        self.track_tree.column("sel", minwidth=30, stretch=False)
+        self.track_tree.bind("<ButtonRelease-1>", self._on_tree_click)
 
         sb_v = ttk.Scrollbar(left, orient="vertical",
                               command=self.track_tree.yview)
@@ -228,7 +247,7 @@ class SpotifyDownloaderApp(tk.Tk):
         ).grid(row=0, column=0, sticky="w")
 
         self.progress = ttk.Progressbar(
-            footer, mode="indeterminate", length=160,
+            footer, mode="determinate", length=160, maximum=100,
         )
         self.progress.grid(row=0, column=1, padx=(0, 10))
 
@@ -379,6 +398,7 @@ class SpotifyDownloaderApp(tk.Tk):
 
     def _on_fetch_done(self, tracks: list) -> None:
         self.progress.stop()
+        self.progress["value"] = 0
         if not tracks:
             self.status_var.set("No tracks found – check the URL.")
             self._log("error", "No tracks found. Make sure the playlist is public.")
@@ -387,9 +407,10 @@ class SpotifyDownloaderApp(tk.Tk):
         for t in tracks:
             self.track_tree.insert(
                 "", "end",
-                values=(t["title"], t["artist"], "—"),
+                values=("☑", t["title"], t["artist"], "—"),
             )
 
+        self._update_track_count()
         self.status_var.set(f"{len(tracks)} tracks loaded.")
         self._log("status", f"Loaded {len(tracks)} tracks.")
 
@@ -407,9 +428,28 @@ class SpotifyDownloaderApp(tk.Tk):
             messagebox.showwarning("Missing output dir", "Please select an output directory.")
             return
 
+        # build selected track list from tree (if tracks have been fetched)
+        selected_tracks: list[dict] | None = None
+        children = self.track_tree.get_children()
+        if children:
+            selected_tracks = []
+            for iid in children:
+                vals = self.track_tree.item(iid, "values")
+                if vals[0] == "☑":
+                    selected_tracks.append({"title": vals[1], "artist": vals[2]})
+            if not selected_tracks:
+                messagebox.showwarning(
+                    "No tracks selected",
+                    "Please select at least one track to download.",
+                )
+                return
+
         self._cancel_flag[0] = False
+        self._progress_total = len(selected_tracks) if selected_tracks else 0
+        self._progress_done = 0
         self.dl_btn.config(state="disabled")
         self.cancel_btn.config(state="normal")
+        self.progress["value"] = 0
         self.progress.start(12)
         self.status_var.set("Starting…")
 
@@ -418,7 +458,7 @@ class SpotifyDownloaderApp(tk.Tk):
         title_first = self.title_first_var.get()
 
         # pre-populate track list if empty
-        if not self.track_tree.get_children():
+        if not children:
             self._log("status", "No tracks pre-fetched; fetching now…")
 
         def worker() -> None:
@@ -431,6 +471,7 @@ class SpotifyDownloaderApp(tk.Tk):
                 download_archive=None,
                 progress_cb=self._on_progress,
                 cancel_flag=self._cancel_flag,
+                selected_tracks=selected_tracks,
             )
             self.after(0, self._on_download_done)
 
@@ -453,18 +494,32 @@ class SpotifyDownloaderApp(tk.Tk):
             self.status_var.set(message)
         elif kind == "done":
             self.status_var.set(message)
-            # mark all rows as done
+            self.progress.stop()
+            self.progress["value"] = 100
             for iid in self.track_tree.get_children():
-                title = self.track_tree.item(iid, "values")[0]
-                self.track_tree.set(iid, "status", "✓")
+                vals = self.track_tree.item(iid, "values")
+                if vals[0] == "☑":
+                    self.track_tree.set(iid, "status", "✓")
         elif kind == "found":
-            # mark matching row in tree
             name = message.replace("Found: ", "").split(" (")[0]
             for iid in self.track_tree.get_children():
-                if self.track_tree.item(iid, "values")[0] in name or \
-                        name in self.track_tree.item(iid, "values")[0]:
+                title = self.track_tree.item(iid, "values")[1]
+                if title in name or name in title:
                     self.track_tree.set(iid, "status", "matched")
                     break
+            self._advance_progress()
+        elif kind == "not_found":
+            self._advance_progress()
+
+    def _advance_progress(self) -> None:
+        """Increment the determinate progress bar by one track."""
+        self._progress_done += 1
+        if self._progress_total > 0:
+            if self._progress_done == 1:
+                self.progress.stop()          # stop indeterminate animation once
+            self.progress["value"] = int(
+                self._progress_done / self._progress_total * 100
+            )
 
     def _on_download_done(self) -> None:
         self.progress.stop()
@@ -493,6 +548,52 @@ class SpotifyDownloaderApp(tk.Tk):
         self.log_text.config(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.config(state="disabled")
+
+    # ── selection helpers ─────────────────────────────────────────────────────
+
+    def _on_tree_click(self, event: tk.Event) -> None:
+        """Toggle the checkbox when the '✓' column is clicked."""
+        region = self.track_tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        col = self.track_tree.identify_column(event.x)
+        if col != "#1":  # first column is the checkbox
+            return
+        iid = self.track_tree.identify_row(event.y)
+        if not iid:
+            return
+        cur = self.track_tree.item(iid, "values")[0]
+        new_val = "☐" if cur == "☑" else "☑"
+        vals = list(self.track_tree.item(iid, "values"))
+        vals[0] = new_val
+        self.track_tree.item(iid, values=vals)
+        self._update_track_count()
+
+    def _select_all(self) -> None:
+        for iid in self.track_tree.get_children():
+            vals = list(self.track_tree.item(iid, "values"))
+            vals[0] = "☑"
+            self.track_tree.item(iid, values=vals)
+        self._update_track_count()
+
+    def _deselect_all(self) -> None:
+        for iid in self.track_tree.get_children():
+            vals = list(self.track_tree.item(iid, "values"))
+            vals[0] = "☐"
+            self.track_tree.item(iid, values=vals)
+        self._update_track_count()
+
+    def _update_track_count(self) -> None:
+        children = self.track_tree.get_children()
+        total = len(children)
+        selected = sum(
+            1 for iid in children
+            if self.track_tree.item(iid, "values")[0] == "☑"
+        )
+        if total:
+            self.track_count_var.set(f"{selected}/{total} selected")
+        else:
+            self.track_count_var.set("")
 
 
 def launch() -> None:
